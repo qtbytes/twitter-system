@@ -1,0 +1,23 @@
+[project]
+name = "twitter-system"
+version = "0.1.0"
+description = "Twitter / Weibo system interview skeleton with production-style FastAPI structure"
+readme = "readme.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.135.1",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+    "sqlalchemy>=2.0.48",
+    "redis>=6.4.0",
+    "uvicorn>=0.42.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
