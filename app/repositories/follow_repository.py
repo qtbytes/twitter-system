@@ -44,7 +44,7 @@ def unfollow_user(db: Session, follower_id: int, followee_id: int) -> bool:
         )
     )
     db.commit()
-    return len(result.all()) > 0
+    return result.rowcount > 0
 
 
 def list_followee_ids(db: Session, follower_id: int) -> list[int]:
