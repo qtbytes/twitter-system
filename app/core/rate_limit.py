@@ -1,38 +1,67 @@
-from collections import defaultdict, deque
 from collections.abc import Callable
-from time import time
+from time import time_ns
 
 from fastapi import HTTPException, Request, status
+from redis.exceptions import RedisError
 
-_REQUEST_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+from app.db.redis_client import get_redis_client
 
 
 def rate_limiter(bucket_name: str, max_requests: int, window_seconds: int) -> Callable:
     """
-    Simple in-memory sliding-window rate limiter.
+    Redis-backed sliding-window rate limiter.
 
-    Notes:
-    - Good enough for local learning and interview demos.
-    - In production, move this state to Redis so multiple app instances
-      share the same counters.
+    Why this version is more realistic:
+    - shared across multiple app instances
+    - survives per-process memory isolation
+    - works better under concurrent traffic than an in-memory dict
+
+    Data structure:
+    - one Redis sorted set per bucket
+    - score = request timestamp in milliseconds
+    - member = unique request id derived from current time
+
+    Flow per request:
+    1. remove entries older than the window
+    2. add current request timestamp
+    3. count how many remain in the window
+    4. set expiry so inactive buckets are cleaned up automatically
     """
 
     def dependency(request: Request) -> None:
-        now = time()
+        redis_client = get_redis_client()
+        if redis_client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Redis is required for rate limiting but is unavailable.",
+            )
+
+        now_ns = time_ns()
+        now_ms = now_ns // 1_000_000
+        window_start_ms = now_ms - window_seconds * 1000
+
         client_host = request.client.host if request.client else "unknown"
         user_hint = request.headers.get("X-User-Id", client_host)
-        bucket_key = f"{bucket_name}:{user_hint}"
-        queue = _REQUEST_BUCKETS[bucket_key]
+        bucket_key = f"rate_limit:{bucket_name}:{user_hint}"
+        member = f"{now_ns}:{user_hint}"
 
-        while queue and now - queue[0] > window_seconds:
-            queue.popleft()
+        try:
+            pipeline = redis_client.pipeline(transaction=True)
+            pipeline.zremrangebyscore(bucket_key, 0, window_start_ms)
+            pipeline.zadd(bucket_key, {member: now_ms})
+            pipeline.zcard(bucket_key)
+            pipeline.expire(bucket_key, window_seconds + 1)
+            _, _, request_count, _ = pipeline.execute()
+        except RedisError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter storage is unavailable.",
+            ) from exc
 
-        if len(queue) >= max_requests:
+        if int(request_count) > max_requests:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Rate limit exceeded for {bucket_name}.",
             )
-
-        queue.append(now)
 
     return dependency
