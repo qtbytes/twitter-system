@@ -1,11 +1,12 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
 from app.api.deps import get_current_user_id
 from app.core.rate_limit import rate_limiter
 from app.db.database import get_db
 from app.repositories import tweet_repository, user_repository
 from app.schemas.tweet import TweetCreate, TweetOut
-from app.services.timeline_service import TimelineService, run_feed_fanout_job
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from app.services.timeline_service import TimelineService, enqueue_feed_fanout_job
 
 router = APIRouter(prefix="/tweets", tags=["tweets"])
 
@@ -20,7 +21,6 @@ router = APIRouter(prefix="/tweets", tags=["tweets"])
 )
 def create_tweet(
     payload: TweetCreate,
-    background_tasks: BackgroundTasks,
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> TweetOut:
@@ -29,7 +29,7 @@ def create_tweet(
 
     Interview points:
     - Writing a tweet should stay fast.
-    - Fan-out on write is pushed to a background task.
+    - Fan-out on write is enqueued to RQ so it runs outside the request path.
     - Rate limiting protects the posting API under high concurrency.
     """
     if user_repository.get_user(db, current_user_id) is None:
@@ -44,10 +44,9 @@ def create_tweet(
         content=payload.content,
     )
 
-    background_tasks.add_task(
-        run_feed_fanout_job,
-        tweet.id,
-        current_user_id,
+    enqueue_feed_fanout_job(
+        tweet_id=tweet.id,
+        author_id=current_user_id,
     )
 
     service = TimelineService(db)

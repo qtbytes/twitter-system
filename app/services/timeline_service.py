@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+from rq.queue import Queue
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -218,6 +219,25 @@ class TimelineService:
         )
 
 
+def invalidate_timeline_cache_for_users(user_ids: list[int]) -> None:
+    """
+    Invalidate cached first-page timelines for the affected users.
+
+    We only cache first pages, so invalidating by user and strategy is enough
+    for this demo. In production you may choose a shorter TTL, versioned keys,
+    or selective invalidation by page size.
+    """
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return
+
+    for user_id in set(user_ids):
+        for strategy in ("read", "write"):
+            pattern = f"timeline:{strategy}:user:{user_id}:limit:*"
+            for key in redis_client.scan_iter(match=pattern):
+                redis_client.delete(key)
+
+
 def run_feed_fanout_job(tweet_id: int, author_id: int) -> None:
     """
     Background fan-out on write job.
@@ -254,3 +274,27 @@ def run_feed_fanout_job(tweet_id: int, author_id: int) -> None:
             actor_id=author_id,
             created_at=tweet.created_at,
         )
+        invalidate_timeline_cache_for_users(owner_ids)
+
+
+def enqueue_feed_fanout_job(tweet_id: int, author_id: int) -> None:
+    """
+    Enqueue fan-out work into RQ when Redis is available.
+
+    If Redis is unavailable, fall back to inline execution so local development
+    still works.
+    """
+    redis_client = get_redis_client()
+    if redis_client is None:
+        run_feed_fanout_job(tweet_id=tweet_id, author_id=author_id)
+        return
+
+    queue = Queue(
+        name=getattr(settings, "rq_queue_name", "timeline-fanout"),
+        connection=redis_client,
+    )
+    queue.enqueue(
+        "app.services.timeline_service.run_feed_fanout_job",
+        tweet_id,
+        author_id,
+    )
