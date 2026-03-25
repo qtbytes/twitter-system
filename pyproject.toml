@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "sqlalchemy>=2.0.48",
     "redis>=6.4.0",
+    "rq<=2.6.1", # https://github.com/rq/rq/issues/2369
     "uvicorn>=0.42.0",
 ]
 
@@ -18,6 +19,13 @@ dev = [
     "pytest>=8.4.0",
 ]
 
+[project.scripts]
+seed-twitter-data = "scripts.seed_performance_data:main"
+run-rq-worker = "app.worker:main"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
