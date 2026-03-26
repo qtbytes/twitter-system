@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, insert, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.comment import Comment
@@ -23,6 +23,8 @@ def bulk_insert_feed_items(
     Notes for interview:
     - We deduplicate owner_ids first.
     - We check existing rows to keep the operation idempotent.
+    - We chunk existence checks and inserts so SQLite / DB parameter limits
+      do not break very large celebrity fan-out workloads.
     - In high-concurrency production systems, this is often moved to
       a background worker and may use bulk SQL / upsert.
     """
@@ -30,33 +32,41 @@ def bulk_insert_feed_items(
     if not unique_owner_ids:
         return 0
 
-    existing_owner_ids = {
-        owner_id
-        for (owner_id,) in db.execute(
-            select(FeedItem.owner_id).where(
-                FeedItem.tweet_id == tweet_id,
-                FeedItem.owner_id.in_(unique_owner_ids),
-            )
-        ).all()
-    }
+    chunk_size = 500
+    total_inserted = 0
 
-    payload = [
-        FeedItem(
-            owner_id=owner_id,
-            tweet_id=tweet_id,
-            actor_id=actor_id,
-            created_at=created_at,
-        )
-        for owner_id in unique_owner_ids
-        if owner_id not in existing_owner_ids
-    ]
+    for start in range(0, len(unique_owner_ids), chunk_size):
+        owner_id_chunk = unique_owner_ids[start : start + chunk_size]
 
-    if not payload:
-        return 0
+        existing_owner_ids = {
+            owner_id
+            for (owner_id,) in db.execute(
+                select(FeedItem.owner_id).where(
+                    FeedItem.tweet_id == tweet_id,
+                    FeedItem.owner_id.in_(owner_id_chunk),
+                )
+            ).all()
+        }
 
-    db.add_all(payload)
+        payload = [
+            {
+                "owner_id": owner_id,
+                "tweet_id": tweet_id,
+                "actor_id": actor_id,
+                "created_at": created_at,
+            }
+            for owner_id in owner_id_chunk
+            if owner_id not in existing_owner_ids
+        ]
+
+        if not payload:
+            continue
+
+        db.execute(insert(FeedItem), payload)
+        total_inserted += len(payload)
+
     db.commit()
-    return len(payload)
+    return total_inserted
 
 
 def list_feed_tweets(
