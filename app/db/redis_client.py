@@ -47,20 +47,3 @@ def get_rq_queue(queue_name: str = "default") -> Queue | None:
 
     _queue = Queue(name=queue_name, connection=redis_client)
     return _queue
-
-
-def run_redis_script(
-    script: str, keys: list[str], args: list[str | int]
-) -> list | int | str | None:
-    """
-    Execute a Lua script against Redis.
-
-    This helper is useful for rate limiting and other small atomic workflows.
-    Returns None when Redis is unavailable so the caller can decide how to
-    handle the fallback path.
-    """
-    redis_client = get_redis_client()
-    if redis_client is None:
-        return None
-
-    return redis_client.eval(script, len(keys), *keys, *args)
