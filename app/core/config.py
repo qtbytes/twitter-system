@@ -1,4 +1,25 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_database_url(database_url: str) -> str:
+    sqlite_prefix = "sqlite:///"
+    if not database_url.startswith(sqlite_prefix):
+        return database_url
+
+    sqlite_path = database_url[len(sqlite_prefix) :]
+    if not sqlite_path or sqlite_path == ":memory:":
+        return database_url
+
+    candidate = Path(sqlite_path)
+    if candidate.is_absolute():
+        return database_url
+
+    resolved_path = (PROJECT_ROOT / candidate).resolve()
+    return f"{sqlite_prefix}{resolved_path.as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -32,3 +53,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+settings.database_url = resolve_database_url(settings.database_url)
