@@ -223,15 +223,27 @@ def invalidate_timeline_cache_for_users(user_ids: list[int]) -> None:
     """
     Invalidate cached first-page timelines for the affected users.
 
-    We only cache first pages, so invalidating by user and strategy is enough
-    for this demo. In production you may choose a shorter TTL, versioned keys,
-    or selective invalidation by page size.
+    Current behavior:
+    - For small fan-out sets, delete matching keys eagerly.
+    - For very large fan-out sets, skip per-user Redis scans and rely on TTL.
+
+    Why this tradeoff helps:
+    - Scanning Redis once per follower is O(followers) and can dominate the job
+      for celebrity fan-out.
+    - This project caches only the first page and already uses a short TTL, so
+      bounded staleness is acceptable for the demo benchmark.
     """
     redis_client = get_redis_client()
     if redis_client is None:
         return
 
-    for user_id in set(user_ids):
+    unique_user_ids = list(set(user_ids))
+    eager_invalidation_limit = 1000
+
+    if len(unique_user_ids) > eager_invalidation_limit:
+        return
+
+    for user_id in unique_user_ids:
         for strategy in ("read", "write"):
             pattern = f"timeline:{strategy}:user:{user_id}:limit:*"
             for key in redis_client.scan_iter(match=pattern):
@@ -297,4 +309,5 @@ def enqueue_feed_fanout_job(tweet_id: int, author_id: int) -> None:
         "app.services.timeline_service.run_feed_fanout_job",
         tweet_id,
         author_id,
+        job_timeout=settings.rq_job_timeout_seconds,
     )
