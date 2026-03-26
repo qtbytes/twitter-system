@@ -2,7 +2,7 @@ import argparse
 import math
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import delete, func, insert, select
 
@@ -92,44 +92,30 @@ def clear_existing_data() -> None:
         db.commit()
 
 
-def chunked_ids(start_id: int, count: int, size: int) -> list[tuple[int, int]]:
-    ranges: list[tuple[int, int]] = []
-    current = start_id
-    remaining = count
-
-    while remaining > 0:
-        chunk_size = min(size, remaining)
-        ranges.append((current, current + chunk_size - 1))
-        current += chunk_size
-        remaining -= chunk_size
-
-    return ranges
-
-
 def create_celebrity_and_followers(
     follower_count: int,
     batch_size: int,
-) -> tuple[int, list[int], float, float]:
+) -> tuple[int, int, float, float]:
     started_users = time.perf_counter()
 
     with SessionLocal() as db:
-        celebrity = User(username="celebrity_benchmark")
-        db.add(celebrity)
+        db.execute(insert(User), [{"username": "celebrity_benchmark"}])
         db.commit()
-        db.refresh(celebrity)
 
-        follower_ids: list[int] = []
+        celebrity_id = db.scalar(
+            select(User.id).where(User.username == "celebrity_benchmark")
+        )
+        if celebrity_id is None:
+            raise RuntimeError("failed to create celebrity benchmark user")
+
         created_followers = 0
-
         while created_followers < follower_count:
             current_batch_size = min(batch_size, follower_count - created_followers)
-            users = [
-                User(username=f"fan_{created_followers + offset:07d}")
+            payload = [
+                {"username": f"fan_{created_followers + offset:07d}"}
                 for offset in range(current_batch_size)
             ]
-            db.add_all(users)
-            db.flush()
-            follower_ids.extend(user.id for user in users)
+            db.execute(insert(User), payload)
             db.commit()
             created_followers += current_batch_size
 
@@ -138,14 +124,22 @@ def create_celebrity_and_followers(
     started_follows = time.perf_counter()
 
     with SessionLocal() as db:
-        created_follows = 0
         celebrity_id = db.scalar(
             select(User.id).where(User.username == "celebrity_benchmark")
         )
         if celebrity_id is None:
             raise RuntimeError("failed to load celebrity benchmark user")
 
-        while created_follows < follower_count:
+        follower_ids = (
+            db.execute(
+                select(User.id).where(User.username.like("fan_%")).order_by(User.id)
+            )
+            .scalars()
+            .all()
+        )
+
+        created_follows = 0
+        while created_follows < len(follower_ids):
             current_batch_ids = follower_ids[
                 created_follows : created_follows + batch_size
             ]
@@ -158,7 +152,7 @@ def create_celebrity_and_followers(
             created_follows += len(current_batch_ids)
 
     follow_create_seconds = time.perf_counter() - started_follows
-    return celebrity_id, follower_ids, user_create_seconds, follow_create_seconds
+    return celebrity_id, len(follower_ids), user_create_seconds, follow_create_seconds
 
 
 def create_benchmark_tweet(author_id: int, content: str) -> tuple[int, datetime, float]:
@@ -325,7 +319,7 @@ def main() -> None:
         clear_existing_data()
 
     print(f"Creating celebrity and {args.followers:,} followers...")
-    celebrity_id, follower_ids, user_create_seconds, follow_create_seconds = (
+    celebrity_id, follower_count, user_create_seconds, follow_create_seconds = (
         create_celebrity_and_followers(
             follower_count=args.followers,
             batch_size=args.batch_size,
@@ -352,7 +346,7 @@ def main() -> None:
     )
 
     result = BenchmarkResult(
-        follower_count=len(follower_ids),
+        follower_count=follower_count,
         batch_size=args.batch_size,
         user_create_seconds=user_create_seconds,
         follow_create_seconds=follow_create_seconds,

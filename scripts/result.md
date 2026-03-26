@@ -1,3 +1,5 @@
+## 100000 followers, 10000 batch size
+
 ```sh
 $ uv run benchmark-celebrity-fanout --followers 100000 --batch-size 10000 --drop-existing
 Preparing database...
@@ -33,7 +35,7 @@ Important caveat
 $
 ```
 
-
+## 1000000 followers, 10000 batch size
 
 ```sh
 $ uv run benchmark-celebrity-fanout --followers 1000000 --batch-size 10000 --drop-existing
@@ -62,6 +64,80 @@ Interpretation
 - Measured latency for this run: 11.86s to deliver one tweet to 1,000,001 timelines.
 - Effective throughput: about 84,347.49 feed rows / second.
 - If throughput stayed similar, 1,000,001 timeline deliveries (1 celebrity + 1e6 followers) would take about 11.86s.
+
+Important caveat
+------------------------------------------------------------------------
+- This benchmark measures database-side fan-out latency in one process. It does not include queue backlog, multiple workers, network hops, replication lag, cache invalidation storms, or client-visible read delay.
+- If you want a truer production-style number, run this benchmark against Postgres/MySQL instead of local SQLite, and compare one worker vs multiple workers.
+$
+```
+
+## 1000000 followers, 100000 batch size
+
+```sh
+$ uv run benchmark-celebrity-fanout --followers 1000000 --batch-size 100000 --drop-existing
+Preparing database...
+Clearing existing rows...
+Creating celebrity and 1,000,000 followers...
+Creating benchmark tweet...
+Running fan-out benchmark...
+
+========================================================================
+Celebrity Fan-out Benchmark Result
+========================================================================
+followers:                  1,000,000
+batch_size:                 100,000
+fanout_strategy:            current fan-out job
+user_create_seconds:        29.49
+follow_create_seconds:      5.90
+tweet_create_seconds:       0.0047
+fanout_seconds:             12.14
+delivered_rows:             1,000,001
+throughput_rows_per_second: 82,345.22
+========================================================================
+
+Interpretation
+------------------------------------------------------------------------
+- Measured latency for this run: 12.14s to deliver one tweet to 1,000,001 timelines.
+- Effective throughput: about 82,345.22 feed rows / second.
+- If throughput stayed similar, 1,000,001 timeline deliveries (1 celebrity + 1e6 followers) would take about 12.14s.
+
+Important caveat
+------------------------------------------------------------------------
+- This benchmark measures database-side fan-out latency in one process. It does not include queue backlog, multiple workers, network hops, replication lag, cache invalidation storms, or client-visible read delay.
+- If you want a truer production-style number, run this benchmark against Postgres/MySQL instead of local SQLite, and compare one worker vs multiple workers.
+$
+```
+
+## Optimized create user, 1000000 followers, 10000 batch size
+
+```sh
+$ uv run benchmark-celebrity-fanout --followers 1000000 --batch-size 10000 --drop-existing
+Preparing database...
+Clearing existing rows...
+Creating celebrity and 1,000,000 followers...
+Creating benchmark tweet...
+Running fan-out benchmark...
+
+========================================================================
+Celebrity Fan-out Benchmark Result
+========================================================================
+followers:                  1,000,000
+batch_size:                 10,000
+fanout_strategy:            current fan-out job
+user_create_seconds:        5.08
+follow_create_seconds:      6.85
+tweet_create_seconds:       0.0051
+fanout_seconds:             11.60
+delivered_rows:             1,000,001
+throughput_rows_per_second: 86,184.49
+========================================================================
+
+Interpretation
+------------------------------------------------------------------------
+- Measured latency for this run: 11.60s to deliver one tweet to 1,000,001 timelines.
+- Effective throughput: about 86,184.49 feed rows / second.
+- If throughput stayed similar, 1,000,001 timeline deliveries (1 celebrity + 1e6 followers) would take about 11.60s.
 
 Important caveat
 ------------------------------------------------------------------------
