@@ -288,4 +288,11 @@ How to ensure idempotency
     If you just return it, cleanup is harder and leaks become more likely.
     ```
 
-16. I want see a real rate_limiter.
+16. why use Lua in Redis?
+
+    ```
+    1. Atomicity: It turns multiple operations into one "Transaction," preventing race conditions between different application servers.
+    2. Performance: It reduces network round-trips by executing logic directly on the Redis server.
+    3. Complex Logic: It allows you to use `if/else` and loops on the data without transferring that data back and forth over the network.
+
+    ```
